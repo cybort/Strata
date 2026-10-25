@@ -18,13 +18,27 @@ from typing import Iterator
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def resolve_llama_server() -> str | None:
-    env = os.environ.get("STRATA_PRISM_LLAMA") or os.environ.get("LLAMA_SERVER")
+def _looks_prism_install(path: str | Path) -> bool:
+    """Stock winget/upstream llama-server is not Prism (PQ2_0/PTQ1_0 would be unknown types)."""
+    p = Path(path)
+    parts = " ".join(p.parts).lower()
+    if "prism" in parts or "prism-llama" in parts:
+        return True
+    pin = ROOT / "third_party" / "prism-llama" / "PIN.json"
+    if pin.is_file():
+        try:
+            # Any binary under the pinned tree counts once fetch_prism wrote PIN.json
+            return str(p.resolve()).lower().startswith(str((ROOT / "third_party" / "prism-llama").resolve()).lower())
+        except OSError:
+            return False
+    return False
+
+
+def resolve_llama_server(*, require_prism: bool = True) -> str | None:
+    """Locate llama-server. When require_prism is True, ignore stock PATH installs."""
+    env = os.environ.get("STRATA_PRISM_LLAMA")
     if env and Path(env).exists():
-        return env
-    which = shutil.which("llama-server")
-    if which:
-        return which
+        return env  # user override is trusted
     base = ROOT / "third_party" / "prism-llama"
     if base.is_dir():
         for name in ("llama-server.exe", "llama-server", "bin/llama-server.exe", "bin/llama-server"):
@@ -32,13 +46,20 @@ def resolve_llama_server() -> str | None:
             if p.exists():
                 return str(p)
         for p in base.rglob("llama-server*"):
-            if p.is_file() and "server" in p.name.lower():
+            if p.is_file() and "server" in p.name.lower() and not p.name.endswith(".dll"):
                 return str(p)
+    which = shutil.which("llama-server")
+    if which and (not require_prism or _looks_prism_install(which)):
+        return which
+    # Upstream-only Q2_0 path may set LLAMA_SERVER explicitly
+    env2 = os.environ.get("LLAMA_SERVER")
+    if env2 and Path(env2).exists() and not require_prism:
+        return env2
     return None
 
 
 def have_prism_binary() -> bool:
-    return resolve_llama_server() is not None
+    return resolve_llama_server(require_prism=True) is not None
 
 
 class BonsaiServer:
@@ -51,7 +72,7 @@ class BonsaiServer:
         self.port = port
         self.ngl = ngl
         self.ctx = ctx
-        self.exe = exe or resolve_llama_server()
+        self.exe = exe or resolve_llama_server(require_prism=True) or resolve_llama_server(require_prism=False)
         self.extra_args = list(extra_args or [])
         self.proc: subprocess.Popen | None = None
         self.base = f"http://{host}:{port}"
@@ -60,7 +81,7 @@ class BonsaiServer:
         if not self.exe:
             raise FileNotFoundError(
                 "llama-server not found. Run: python tools/bonsai/fetch_prism.py "
-                "and extract it, or set STRATA_PRISM_LLAMA to the binary."
+                "and extract it, or set STRATA_PRISM_LLAMA to the Prism binary."
             )
         args = [
             self.exe, "-m", self.model, "--host", self.host, "--port", str(self.port),
