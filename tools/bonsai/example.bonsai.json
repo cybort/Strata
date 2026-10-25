@@ -4,10 +4,15 @@
   "llama_host": "127.0.0.1",
   "llama_port": 8081,
   "ngl": 99,
+  "fit": true,
   "ctx": 8192,
+  "reasoning": "off",
+  "reasoning_budget": 0,
+  "chat_timeout_s": 3600,
+  "server_timeout_s": 3600,
   "sampling": {
-    "temperature": 1.0,
-    "top_p": 0.95,
+    "temperature": 0.7,
+    "top_p": 0.8,
     "top_k": 20
   }
 }

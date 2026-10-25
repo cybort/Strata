@@ -5688,14 +5688,22 @@ def main() -> int:
             raise SystemExit(f"[bonsai] {bad}")
         print(f"[bonsai] backend={c.backend.value} packing={c.packing} ({c.reason})", flush=True)
         print("loading PrismML llama-server ...", flush=True)
+        # ngl: layers in VRAM (LM Studio-style). null/omit with fit=true lets llama.cpp --fit choose.
+        ngl_raw = cfg.get("ngl", cfg.get("gpu_layers", 99))
+        ngl = None if ngl_raw is None else int(ngl_raw)
         engine = BonsaiEngine(
             cfg["model"],
             host=cfg.get("llama_host", "127.0.0.1"),
             port=int(cfg.get("llama_port", 8081)),
-            ngl=int(cfg.get("ngl", 99)),
+            ngl=ngl,
             ctx=int(cfg.get("ctx", cfg.get("max_context", 8192))),
             exe=cfg.get("exe"),
             extra_args=list(cfg.get("args") or []),
+            fit=cfg.get("fit", True) is not False,
+            reasoning=str(cfg.get("reasoning", "off")),
+            reasoning_budget=int(cfg.get("reasoning_budget", 0)),
+            chat_timeout_s=int(cfg.get("chat_timeout_s", os.environ.get("STRATA_BONSAI_CHAT_TIMEOUT", "3600"))),
+            server_timeout_s=int(cfg.get("server_timeout_s", os.environ.get("STRATA_BONSAI_SERVER_TIMEOUT", "3600"))),
         )
         vision, sampling_defaults, effort_end = None, sampling_defaults_from_config(cfg), None
     elif a.engine == "strata":
