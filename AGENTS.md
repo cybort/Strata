@@ -20,7 +20,10 @@ offers the same steps as tools.
 - Setup's own tests run without a GPU or downloads: `python tools/test_setup_<name>.py` (for example
   `tools/test_setup_amd.py`, `tools/test_setup_choices.py`).
 - Implementations like the streaming trunk reader (progressive loading) lower the memory baseline by 
-  avoiding reading the full `dense.bin` into memory, cycling dense layers in a ring buffer instead.
+  avoiding reading the full `dense.bin` into memory, cycling dense layers in a ring buffer instead
+  (`--trunk-gb N` on `strata generate`).
+- Ternary-Bonsai GGUF (`PQ2_0` / `PTQ1_0` / Hadamard) is served by the PrismML llama.cpp backend
+  (`--engine bonsai`, see [tools/bonsai/README.md](tools/bonsai/README.md)), not by the Flash-Next kernels.
 - Keep the docs' style: plain words, measured numbers with what they were measured on, no claims without a
   measurement.
 

@@ -1,0 +1,13 @@
+{
+  "model": "K:/models/Ternary-Bonsai-2-27B-gguf/Ternary-Bonsai-2-27B-PQ2_0.gguf",
+  "model_name": "ternary-bonsai-2-27b",
+  "llama_host": "127.0.0.1",
+  "llama_port": 8081,
+  "ngl": 99,
+  "ctx": 8192,
+  "sampling": {
+    "temperature": 1.0,
+    "top_p": 0.95,
+    "top_k": 20
+  }
+}

@@ -2,6 +2,7 @@
 
     python -m serve.server --engine mock --port 8095            (a scripted engine, for clients and tests)
     python -m serve.server --engine strata --config strata.json --port 8080   (the real engine, resident)
+    python -m serve.server --engine bonsai --config bonsai.json --port 8080   (PrismML llama.cpp for Ternary-Bonsai GGUF)
 
 Endpoints: POST /v1/chat/completions (OpenAI, stream and non-stream), POST /v1/messages (Anthropic, stream and
 non-stream), GET /v1/models, GET /models, GET /props, GET /slots, GET /health, GET /mcp. One sequence at a time behind a FIFO (plan: one resident sequence).
@@ -5610,9 +5611,9 @@ def sampling_defaults_from_config(cfg: dict) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--engine", choices=["mock", "strata"], default="mock")
+    ap.add_argument("--engine", choices=["mock", "strata", "bonsai"], default="mock")
     ap.add_argument("--config", help="strata engine config (JSON: exe, args, cwd, tokenizer, model_name), "
-                                     "written by setup.py")
+                                     "written by setup.py; for --engine bonsai: model (GGUF path), optional exe/port/ngl")
     ap.add_argument("--host", default=None,
                     help="the address to listen on: 127.0.0.1 = this PC only (the default), 0.0.0.0 = also other devices "
                          "on your network (set an API key); also \"host\" in the config")
@@ -5675,7 +5676,29 @@ def main() -> int:
         types = json.loads((tpath / "token_type.json").read_text())
         tok = ST.Tokenizer(tokens, merges, types)
     hub = hub_from_config(cfg, a.mcp_config)            # before the minutes of loading: a bad entry stops here
-    if a.engine == "strata":
+    if a.engine == "bonsai":
+        if not cfg or not cfg.get("model"):
+            ap.error("--engine bonsai needs --config with a \"model\" GGUF path")
+        sys.path.insert(0, str(ROOT / "tools"))
+        from bonsai.router import classify_model, refuse_reason  # noqa: WPS433
+        from serve.bonsai_backend import BonsaiEngine, have_prism_binary  # noqa: WPS433
+        c = classify_model(cfg["model"])
+        bad = refuse_reason(c, have_prism_binary())
+        if bad:
+            raise SystemExit(f"[bonsai] {bad}")
+        print(f"[bonsai] backend={c.backend.value} packing={c.packing} ({c.reason})", flush=True)
+        print("loading PrismML llama-server ...", flush=True)
+        engine = BonsaiEngine(
+            cfg["model"],
+            host=cfg.get("llama_host", "127.0.0.1"),
+            port=int(cfg.get("llama_port", 8081)),
+            ngl=int(cfg.get("ngl", 99)),
+            ctx=int(cfg.get("ctx", cfg.get("max_context", 8192))),
+            exe=cfg.get("exe"),
+            extra_args=list(cfg.get("args") or []),
+        )
+        vision, sampling_defaults, effort_end = None, sampling_defaults_from_config(cfg), None
+    elif a.engine == "strata":
         if not cfg:
             ap.error("--engine strata needs --config")
         vision = None
