@@ -421,6 +421,7 @@ struct Options {
     bool no_host_worker = false;
     bool coupled_draft = strata::core::coupled_draft_env(); ///< Coupled draft sampling for MTP drafter under sampling
     bool mmap_experts = false;    ///< R2.1: opt OUT of the resident arena, back to MapViewOfFile
+    double trunk_gb = 0;          ///< --trunk-gb: stream dense blk.* layers under this host/VRAM budget (0 = full load)
     std::string shared_expert_arena; ///< Linux: optional file backing for the resident arena shared by processes
     bool resident_cpu_experts = false; ///< mmap-backed static-cache misses copied into ordinary RAM
     /// `--resident-experts` (the low-RAM PC's resident mode, chosen by setup): `--resident-cpu-experts` with the copy
@@ -857,6 +858,8 @@ void usage() {
                  "                       then E-cores) or p-cores (P-cores and their siblings only).\n"
                  "  --coupled-draft      enable coupled draft sampling for MTP drafter under sampling (STRATA_SPEC_COUPLED)\n"
                  "  --no-coupled-draft   disable coupled draft sampling (propose argmax drafts)\n"
+                 "  --trunk-gb N         Stream dense blk.* layers under an N GiB budget (pinned prefix + ring).\n"
+                 "                       Lowers the dense VRAM floor; 0 (default) loads every dense tensor as before.\n"
                  "  --mmap-experts       R2.1: opt OUT of the resident expert arena, back to MapViewOfFile.\n"
                  "                       The A/B arm: the mmap's rate depends on the OS page cache holding\n"
                  "                       34 GB, and measured 71.97 vs 34.78 ms/token cold vs warm.\n"
@@ -1908,6 +1911,7 @@ int main(int argc, char** argv) {
         else if (a == "--expert-profile-save-every")
             o.expert_profile_save_min = std::atof(next("--expert-profile-save-every"));
         else if (a == "--gpu-stages") o.gpu_stages = true;
+        else if (a == "--trunk-gb") o.trunk_gb = std::atof(next("--trunk-gb"));
         else if (a == "--mmap-experts") o.mmap_experts = true;
         else if (a == "--shared-expert-arena") o.shared_expert_arena = next("--shared-expert-arena");
         else if (a == "--resident-cpu-experts") o.resident_cpu_experts = o.resident_cpu_explicit = true;
@@ -2668,6 +2672,21 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "strata generate: layer split: CUDA0 loads the dense weights of layers 0-%lld only\n",
                      (long long) split_at[0] - 1);
     }
+    strata::core::TrunkStreamer trunk_streamer;
+    const bool trunk_stream = o.trunk_gb > 0;
+    if (trunk_stream) {
+        const uint64_t budget = (uint64_t) (o.trunk_gb * 1024.0 * 1024.0 * 1024.0);
+        if (!trunk_streamer.open(o.pack, budget, err, /*host_only=*/false)) {
+            std::fprintf(stderr, "strata generate: trunk streamer: %s\n", err.c_str());
+            return 1;
+        }
+        std::vector<std::string> streamed;
+        trunk_streamer.streamed_names(streamed);
+        for (const auto& n : streamed) skip.insert(n);
+        std::fprintf(stderr, "strata generate: --trunk-gb %.2f: streaming %zu dense blk tensors "
+                             "(%d pinned, ring %d)\n",
+                     o.trunk_gb, streamed.size(), trunk_streamer.npin(), trunk_streamer.nslot());
+    }
     uint64_t pool_bytes = 0;
     if (!strata::core::WeightTable::pool_bytes(o.pack, pool_bytes, err, skip.empty() ? nullptr : &skip)) {
         std::fprintf(stderr, "strata generate: %s\n", err.c_str());
@@ -2720,17 +2739,22 @@ int main(int argc, char** argv) {
                          "skipped: served natively)\n",
                  (unsigned long long) (pool_bytes >> 20), o.pack.c_str(), load_s(), skip.size());
 
-    strata::core::TrunkStreamer trunk_streamer;
-    // Basic test logic to initialize the streamer, size based on 2GB budget default if not explicitly specified yet
-    if (!trunk_streamer.open(o.pack, wt, 2ull << 30, err)) {
-        std::fprintf(stderr, "strata generate: trunk streamer error: %s\n", err.c_str());
+    struct TrunkHookGuard {
+        bool on = false;
+        ~TrunkHookGuard() {
+            if (on) strata::core::trunk_bind_hook_clear();
+        }
+    } trunk_hook_guard;
+    if (trunk_stream) {
+        strata::core::trunk_bind_hook_set(&trunk_streamer, &wt);
+        trunk_hook_guard.on = true;
+        // Bind layer 0 so any pre-loop weight checks see resident pointers.
+        if (!trunk_streamer.bind_layer(0, wt, err)) {
+            std::fprintf(stderr, "strata generate: trunk bind layer 0: %s\n", err.c_str());
+            return 1;
+        }
+        if (trunk_streamer.n_layers() > 1) trunk_streamer.prefetch_layer(1);
     }
-
-    // --- STRATA PROGRESSIVE LOADING (TRUNK STREAM) ---
-    // At this point, the streaming trunk reader can be initialized 
-    // to manage blk.* weights dynamically.
-    // trunk_streamer.open(o.pack, wt, trunk_budget_bytes, err);
-    // -------------------------------------------------
 
     strata::core::NativeDense native_dense;
     if (!o.native_dense_gguf.empty()) {
@@ -12149,6 +12173,7 @@ int main(int argc, char** argv) {
 
     if (dump != nullptr) std::printf("%-24s %s\n", "logits dumped", o.dump_logits.c_str());
 
+    if (trunk_stream) trunk_streamer.report();
     strata::core::session_graphs_free(gr);
     strata::core::doorbell_free(db);
     cudaFree(d_next);

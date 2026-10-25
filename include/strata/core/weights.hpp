@@ -132,11 +132,16 @@ public:
               const std::set<std::string>* skip = nullptr);
 
     const WeightRef* find(const std::string& name) const;
+    /// Non-const lookup for TrunkStreamer rebinding of `data` pointers.
+    WeightRef* find_mut(const std::string& name);
+    /// Insert or replace a row (streaming path installs skipped blk tensors).
+    void install(const std::string& name, const WeightRef& wr);
     const std::map<std::string, WeightRef>& all() const { return table_; }
     const LoadReport& report() const { return report_; }
 
 private:
     friend class NativeDense;
+    friend class TrunkStreamer;
     std::map<std::string, WeightRef> table_;
     LoadReport report_;
 };

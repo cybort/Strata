@@ -1,5 +1,6 @@
 // src/core/session.cpp - one token through all 48 layers.  See the header for why the graphs are per-layer.
 #include "strata/core/session.hpp"
+#include "strata/core/trunk_stream.hpp"
 #include "strata/kernels/mrope.hpp"
 #include "strata/core/progress.hpp"
 
@@ -803,6 +804,10 @@ bool session_token(const WeightTable& tables, const ModelGeometry& g, int64_t po
         }
 
         err.clear();
+        if (!trunk_bind_before_layer((int) l, (int) g.n_layers, err)) {
+            err = "layer " + std::to_string(l) + ": " + err;
+            return false;
+        }
         const bool ok = is_qsa_layer(g, l)
             ? block_layer(tables, g, l, pos, pos_base, s.gdn, s.qsa_states[qsa_index], s.qsa_bufs, s.moe, s.k,
                           s.block, parts, stream, err, nullptr, s.ple.ready() ? &s.ple : nullptr)

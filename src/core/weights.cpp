@@ -484,4 +484,11 @@ const WeightRef* WeightTable::find(const std::string& name) const {
     return it == table_.end() ? nullptr : &it->second;
 }
 
+WeightRef* WeightTable::find_mut(const std::string& name) {
+    const auto it = table_.find(name);
+    return it == table_.end() ? nullptr : &it->second;
+}
+
+void WeightTable::install(const std::string& name, const WeightRef& wr) { table_[name] = wr; }
+
 }  // namespace strata::core
